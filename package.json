@@ -7,7 +7,7 @@
     "dev": "node server.mjs",
     "start": "node server.mjs",
     "create-admin": "node scripts/create-admin.mjs",
-    "build": "node scripts/check.mjs && node --check server.mjs && node --check src/server/database.mjs && node --check src/app.js && node --check scripts/create-admin.mjs"
+    "build": "node scripts/check.mjs && node scripts/check-postgres-migration.mjs && node --check server.mjs && node --check src/server/database.mjs && node --check src/app.js && node --check scripts/create-admin.mjs"
   },
   "engines": {
     "node": ">=22.5"
