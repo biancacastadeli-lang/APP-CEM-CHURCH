@@ -4,15 +4,21 @@
   "private": true,
   "description": "MVP visual do CEM CONNECT",
   "scripts": {
-    "dev": "node server.mjs",
-    "start": "node server.mjs",
+    "dev": "node --env-file-if-exists=.env server.mjs",
+    "start": "node --env-file-if-exists=.env server.mjs",
     "create-admin": "node scripts/create-admin.mjs",
-    "build": "node scripts/check.mjs && node scripts/check-postgres-migration.mjs && node --check server.mjs && node --check src/server/database.mjs && node --check src/app.js && node --check scripts/create-admin.mjs"
+    "create-admin:postgres": "node --env-file-if-exists=.env scripts/create-postgres-admin.mjs",
+    "db:check": "node --env-file-if-exists=.env scripts/check-postgres-connection.mjs",
+    "test:auth:postgres": "node --env-file-if-exists=.env scripts/test-postgres-auth.mjs",
+    "test:profile:postgres": "node scripts/test-postgres-profile.mjs",
+    "test:people-cells:postgres": "node --env-file-if-exists=.env scripts/test-postgres-people-cells.mjs",
+    "build": "node scripts/check.mjs && node scripts/check-postgres-migration.mjs && node --check server.mjs && node --check src/server/database.mjs && node --check src/server/postgres.mjs && node --check src/server/postgres-auth.mjs && node --check src/server/postgres-profile.mjs && node --check src/server/postgres-people-cells.mjs && node --check src/server/postgres-branding.mjs && node --check src/config/brand.js && node --check src/app.js && node --check scripts/create-admin.mjs && node --check scripts/create-postgres-admin.mjs && node --check scripts/check-postgres-connection.mjs && node --check scripts/test-postgres-auth.mjs && node --check scripts/test-postgres-profile.mjs && node --check scripts/test-postgres-people-cells.mjs"
   },
   "engines": {
     "node": ">=22.5"
   },
   "dependencies": {
+    "pg": "^8.23.0",
     "qrcode": "^1.5.4"
   }
 }

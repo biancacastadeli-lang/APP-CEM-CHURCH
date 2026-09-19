@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const migration = readFileSync(resolve('supabase/migrations/20260918190000_initial_mvp_schema.sql'), 'utf8');
+const refinement = readFileSync(resolve('supabase/migrations/20260919100000_refine_mvp_operational_history.sql'), 'utf8');
+const branding = readFileSync(resolve('supabase/migrations/20260919110000_add_configurable_branding.sql'), 'utf8');
+const birthDate = readFileSync(resolve('supabase/migrations/20260919120000_add_people_birth_date.sql'), 'utf8');
+const peopleAndFunctions = readFileSync(resolve('supabase/migrations/20260919130000_add_people_and_ministry_functions.sql'), 'utf8');
 const required = [
   'create table public.people', 'create table public.app_users', 'create table public.user_roles',
   'create table public.cells', 'create table public.cell_memberships', 'create table public.cell_leaderships',
@@ -39,5 +43,52 @@ const present = forbidden.filter((value) => migration.includes(value));
 if (present.length) throw new Error(`Migration PostgreSQL contém regra obsoleta: ${present.join(', ')}`);
 if (/(supabase_url|service_role|anon_key|postgres:\/\/[^\s]+|password\s*=\s*['\"]\S+)/i.test(migration)) {
   throw new Error('A migration não pode conter credenciais ou URLs de conexão.');
+}
+const refinementRequired = [
+  "set meeting_status = 'held'", "meeting_status in ('scheduled', 'held', 'not_held')",
+  'create table public.person_status_history', 'create trigger visitors_record_status_history',
+  'create trigger referrals_record_status_history', 'create trigger care_cases_record_status_history',
+  'create table public.meeting_offering_adjustments',
+  'create trigger meeting_photos_require_authorized_uploader',
+  'create trigger meeting_photos_require_leader_publication',
+  'alter table public.person_status_history enable row level security',
+  'alter table public.meeting_offering_adjustments enable row level security',
+  'care_records. A camada Node nunca'
+];
+const missingRefinement = refinementRequired.filter((value) => !refinement.includes(value));
+if (missingRefinement.length) throw new Error(`Complemento PostgreSQL incompleto: ${missingRefinement.join(', ')}`);
+if (/(supabase_url|service_role|anon_key|postgres:\/\/[^\s]+|password\s*=\s*['\"]\S+)/i.test(refinement)) {
+  throw new Error('O complemento PostgreSQL não pode conter credenciais ou URLs de conexão.');
+}
+const brandingRequired = [
+  'create table public.church_branding', 'add column subtitle text', 'add column colors jsonb',
+  'add column banner_url text', 'alter column banner_storage_path drop not null',
+  'annual_theme_colors_are_safe', "('primary', 'secondary', 'accent', 'background', 'text')",
+  'annual_themes_colors_check', 'annual_themes_banner_url_check',
+  'create trigger church_branding_set_updated_at', 'alter table public.church_branding enable row level security'
+];
+const missingBranding = brandingRequired.filter((value) => !branding.includes(value));
+if (missingBranding.length) throw new Error(`Migration de identidade incompleta: ${missingBranding.join(', ')}`);
+if (/(supabase_url|service_role|anon_key|postgres:\/\/[^\s]+|password\s*=\s*['\"]\S+)/i.test(branding)) {
+  throw new Error('A migration de identidade não pode conter credenciais ou URLs de conexão.');
+}
+if (!birthDate.includes('add column birth_date date null')) {
+  throw new Error('Migration de data de nascimento incompleta.');
+}
+if (/(default|update public\.people|insert into public\.people|supabase_url|service_role|anon_key|postgres:\/\/[^\s]+|password\s*=\s*['\"]\S+)/i.test(birthDate)) {
+  throw new Error('Migration de data de nascimento não pode preencher dados, criar valor padrão ou conter credenciais.');
+}
+const peopleAndFunctionsRequired = [
+  'add column sex text', 'add column postal_code text', 'add column person_status text',
+  "('member', 'visitor', 'integrating', 'inactive', 'transferred')",
+  'create trigger people_record_person_status_history', "values (new.id, 'person'",
+  'create table public.ministry_functions', 'create table public.person_ministry_assignments',
+  "('host', 'Anfitrião', 'cell')", "('social_assistant', 'Assistente Social', 'cell')", "('treasurer', 'Tesoureiro', 'church')",
+  'person_ministry_assignments_validate_scope', 'enable row level security'
+];
+const missingPeopleAndFunctions = peopleAndFunctionsRequired.filter((value) => !peopleAndFunctions.includes(value));
+if (missingPeopleAndFunctions.length) throw new Error(`Migration de Pessoas e funções incompleta: ${missingPeopleAndFunctions.join(', ')}`);
+if (/(insert into public\.people|insert into public\.cells|insert into public\.app_users|insert into public\.person_ministry_assignments|supabase_url|service_role|anon_key|postgres:\/\/[^\s]+|password\s*=\s*['\"]\S+)/i.test(peopleAndFunctions)) {
+  throw new Error('Migration de Pessoas e funções não pode conter dados fictícios ou credenciais.');
 }
 console.log('Verificação da migration PostgreSQL concluída.');
