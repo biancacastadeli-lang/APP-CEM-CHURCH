@@ -6,6 +6,7 @@ const refinement = readFileSync(resolve('supabase/migrations/20260919100000_refi
 const branding = readFileSync(resolve('supabase/migrations/20260919110000_add_configurable_branding.sql'), 'utf8');
 const birthDate = readFileSync(resolve('supabase/migrations/20260919120000_add_people_birth_date.sql'), 'utf8');
 const peopleAndFunctions = readFileSync(resolve('supabase/migrations/20260919130000_add_people_and_ministry_functions.sql'), 'utf8');
+const meetingTime = readFileSync(resolve('supabase/migrations/20260919140000_add_meeting_time.sql'), 'utf8');
 const required = [
   'create table public.people', 'create table public.app_users', 'create table public.user_roles',
   'create table public.cells', 'create table public.cell_memberships', 'create table public.cell_leaderships',
@@ -90,5 +91,11 @@ const missingPeopleAndFunctions = peopleAndFunctionsRequired.filter((value) => !
 if (missingPeopleAndFunctions.length) throw new Error(`Migration de Pessoas e funções incompleta: ${missingPeopleAndFunctions.join(', ')}`);
 if (/(insert into public\.people|insert into public\.cells|insert into public\.app_users|insert into public\.person_ministry_assignments|supabase_url|service_role|anon_key|postgres:\/\/[^\s]+|password\s*=\s*['\"]\S+)/i.test(peopleAndFunctions)) {
   throw new Error('Migration de Pessoas e funções não pode conter dados fictícios ou credenciais.');
+}
+if (!meetingTime.includes('add column meeting_time time null')) {
+  throw new Error('Migration de horário histórico da reunião incompleta.');
+}
+if (/(default|update public\.cell_meetings|insert into public\.cell_meetings|supabase_url|service_role|anon_key|postgres:\/\/[^\s]+|password\s*=\s*['\"]\S+)/i.test(meetingTime)) {
+  throw new Error('Migration de horário da reunião não pode preencher reuniões, criar valor padrão ou conter credenciais.');
 }
 console.log('Verificação da migration PostgreSQL concluída.');

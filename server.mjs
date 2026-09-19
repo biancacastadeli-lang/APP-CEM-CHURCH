@@ -2,11 +2,14 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import QRCode from 'qrcode';
-import { createPublicVisitor } from './src/server/database.mjs';
 import { getBrandingAdministration, getPublicBranding, saveAnnualTheme, saveChurchBranding } from './src/server/postgres-branding.mjs';
 import { actorFromPostgresSession, authenticatePostgres, createPostgresSession, revokePostgresSession } from './src/server/postgres-auth.mjs';
 import { getOwnProfile, profileBootstrap, updateOwnProfile } from './src/server/postgres-profile.mjs';
 import { addCellFunction, addMember, addSecretary, assignChurchFunction, createCell, createPerson, endCellFunction, endChurchFunction, endMember, endSecretary, getCell, getPerson, listCells, listPeople, setJourneyModule, setLeader, updateCell, updatePerson } from './src/server/postgres-people-cells.mjs';
+import { createMeeting, getMeetingDetail, getMyCell, publishMeetingPhoto, registerMeetingVisitor, returnCellReferral, saveAttendance, saveMeetingOffering, updateMeeting, updateMemberJourney } from './src/server/postgres-my-cell.mjs';
+import { correctAdminOffering, getAdminOffering, listAdminOfferings, transitionAdminOffering } from './src/server/postgres-offerings.mjs';
+import { addCareRecord, createMemberReferral, createPublicPreRegistration, createReceptionVisitor, getCareCase, listCareReferrals, listCareVisitors, listReceptionVisitors, openCareCase, openReferralCareCase, referCareCaseToCell, updateCareCase, updateReceptionVisitor } from './src/server/postgres-welcome.mjs';
+import { logUnexpectedServerError, publicErrorResponse } from './src/server/http-errors.mjs';
 
 const port = Number(process.env.PORT || 3000);
 const root = process.cwd();
@@ -62,7 +65,7 @@ async function handleApi(request, response, pathname) {
     if (Object.keys(payload).some((key) => !['name', 'whatsapp', 'consent'].includes(key))) return sendJson(response, 400, { error: 'Dados inválidos.' });
     const name = requireText(allowed.name, 'Nome').slice(0, 120); const whatsapp = requireText(allowed.whatsapp, 'WhatsApp').replace(/\D/g, '');
     if (whatsapp.length < 10 || whatsapp.length > 13 || allowed.consent !== true) return sendJson(response, 400, { error: 'Confira os dados e o consentimento.' });
-    createPublicVisitor({ name, whatsapp, consent: true }); return sendJson(response, 201, { ok: true });
+    await createPublicPreRegistration({ name, whatsapp, consent: true }); return sendJson(response, 201, { ok: true });
   }
   if (request.method === 'POST' && pathname === '/api/auth/login') {
     const payload = await readJson(request);
@@ -90,6 +93,40 @@ async function handleApi(request, response, pathname) {
     if (!profile) return sendJson(response, 404, { error: 'Perfil não encontrado.' });
     return sendJson(response, 200, { profile });
   }
+  const query = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`).searchParams;
+  if (request.method === 'GET' && pathname === '/api/reception/visitors') return sendJson(response, 200, await listReceptionVisitors(actor));
+  if (request.method === 'POST' && pathname === '/api/reception/visitors') { const payload = await readJson(request); return sendJson(response, 201, { id: await createReceptionVisitor(actor, payload) }); }
+  const receptionVisitorMatch = pathname.match(/^\/api\/reception\/visitors\/([0-9a-f-]{36})$/i);
+  if (request.method === 'PUT' && receptionVisitorMatch) { const payload = await readJson(request); await updateReceptionVisitor(actor, receptionVisitorMatch[1], payload); return sendJson(response, 200, { ok: true }); }
+  if (request.method === 'GET' && pathname === '/api/care/visitors') return sendJson(response, 200, await listCareVisitors(actor));
+  if (request.method === 'GET' && pathname === '/api/care/referrals') return sendJson(response, 200, await listCareReferrals(actor));
+  if (request.method === 'POST' && pathname === '/api/care/cases') { const payload = await readJson(request); return sendJson(response, 201, { id: await openCareCase(actor, payload.visitorId) }); }
+  if (request.method === 'POST' && pathname === '/api/care/referral-cases') { const payload = await readJson(request); return sendJson(response, 201, { id: await openReferralCareCase(actor, payload.referralId) }); }
+  const careCaseMatch = pathname.match(/^\/api\/care\/cases\/([0-9a-f-]{36})$/i);
+  const careRecordMatch = pathname.match(/^\/api\/care\/cases\/([0-9a-f-]{36})\/records$/i);
+  const careReferralMatch = pathname.match(/^\/api\/care\/cases\/([0-9a-f-]{36})\/referrals$/i);
+  if (request.method === 'GET' && careCaseMatch) return sendJson(response, 200, await getCareCase(actor, careCaseMatch[1]));
+  if (request.method === 'PUT' && careCaseMatch) { const payload = await readJson(request); await updateCareCase(actor, careCaseMatch[1], payload); return sendJson(response, 200, { ok: true }); }
+  if (request.method === 'POST' && careRecordMatch) { const payload = await readJson(request); return sendJson(response, 201, { id: await addCareRecord(actor, careRecordMatch[1], payload) }); }
+  if (request.method === 'POST' && careReferralMatch) { const payload = await readJson(request); return sendJson(response, 201, { id: await referCareCaseToCell(actor, careReferralMatch[1], payload) }); }
+  if (request.method === 'GET' && pathname === '/api/my-cell') return sendJson(response, 200, await getMyCell(actor, { asRole: query.get('as'), cellId: query.get('cellId') || null }));
+  const myMeetingDetailMatch = pathname.match(/^\/api\/my-cells\/([0-9a-f-]{36})\/meetings\/([0-9a-f-]{36})$/i);
+  const myMeetingMatch = pathname.match(/^\/api\/my-cells\/([0-9a-f-]{36})\/meetings$/i);
+  const myAttendanceMatch = pathname.match(/^\/api\/my-cells\/([0-9a-f-]{36})\/meetings\/([0-9a-f-]{36})\/attendance$/i);
+  const myVisitorMatch = pathname.match(/^\/api\/my-cells\/([0-9a-f-]{36})\/meetings\/([0-9a-f-]{36})\/visitors$/i);
+  const myOfferingMatch = pathname.match(/^\/api\/my-cells\/([0-9a-f-]{36})\/meetings\/([0-9a-f-]{36})\/offering$/i);
+  const myPhotoPublicationMatch = pathname.match(/^\/api\/my-cells\/([0-9a-f-]{36})\/meetings\/([0-9a-f-]{36})\/photos\/([0-9a-f-]{36})\/publication$/i);
+  const myJourneyMatch = pathname.match(/^\/api\/my-cells\/([0-9a-f-]{36})\/members\/([0-9a-f-]{36})\/journey$/i);
+  const myCellReferralReturnMatch = pathname.match(/^\/api\/my-cells\/([0-9a-f-]{36})\/referrals\/([0-9a-f-]{36})\/return$/i);
+  if (request.method === 'GET' && myMeetingDetailMatch) return sendJson(response, 200, await getMeetingDetail(actor, { asRole: query.get('as'), cellId: myMeetingDetailMatch[1], meetingId: myMeetingDetailMatch[2] }));
+  if (request.method === 'POST' && myMeetingMatch) { const payload = await readJson(request); return sendJson(response, 201, { id: await createMeeting(actor, { asRole: query.get('as'), cellId: myMeetingMatch[1], input: payload }) }); }
+  if (request.method === 'PUT' && myMeetingDetailMatch) { const payload = await readJson(request); await updateMeeting(actor, { asRole: query.get('as'), cellId: myMeetingDetailMatch[1], meetingId: myMeetingDetailMatch[2], input: payload }); return sendJson(response, 200, { ok: true }); }
+  if (request.method === 'PUT' && myAttendanceMatch) { const payload = await readJson(request); await saveAttendance(actor, { asRole: query.get('as'), cellId: myAttendanceMatch[1], meetingId: myAttendanceMatch[2], attendance: payload.attendance }); return sendJson(response, 200, { ok: true }); }
+  if (request.method === 'POST' && myVisitorMatch) { const payload = await readJson(request); const id = await registerMeetingVisitor(actor, { asRole: query.get('as'), cellId: myVisitorMatch[1], meetingId: myVisitorMatch[2], input: payload }); return sendJson(response, 201, { id }); }
+  if (request.method === 'PUT' && myOfferingMatch) { const payload = await readJson(request); await saveMeetingOffering(actor, { asRole: query.get('as'), cellId: myOfferingMatch[1], meetingId: myOfferingMatch[2], input: payload }); return sendJson(response, 200, { ok: true }); }
+  if (request.method === 'PUT' && myPhotoPublicationMatch) { const payload = await readJson(request); await publishMeetingPhoto(actor, { asRole: query.get('as'), cellId: myPhotoPublicationMatch[1], meetingId: myPhotoPublicationMatch[2], photoId: myPhotoPublicationMatch[3], published: payload.published === true }); return sendJson(response, 200, { ok: true }); }
+  if (request.method === 'PUT' && myJourneyMatch) { const payload = await readJson(request); await updateMemberJourney(actor, { asRole: query.get('as'), cellId: myJourneyMatch[1], personId: myJourneyMatch[2], input: payload }); return sendJson(response, 200, { ok: true }); }
+  if (request.method === 'PUT' && myCellReferralReturnMatch) { const payload = await readJson(request); await returnCellReferral(actor, { asRole: query.get('as'), cellId: myCellReferralReturnMatch[1], referralId: myCellReferralReturnMatch[2], input: payload }); return sendJson(response, 200, { ok: true }); }
   if (request.method === 'GET' && pathname === '/api/people') return sendJson(response, 200, { people: await listPeople(actor, new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`).searchParams.get('q') || '') });
   if (request.method === 'POST' && pathname === '/api/people') { const payload = await readJson(request); return sendJson(response, 201, { id: await createPerson(actor, payload) }); }
   const personMatch = pathname.match(/^\/api\/people\/([0-9a-f-]{36})$/i);
@@ -122,6 +159,11 @@ async function handleApi(request, response, pathname) {
   if (request.method === 'DELETE' && postgresFunctionEndMatch) { const payload = await readJson(request); const updated = await endCellFunction(actor, postgresFunctionEndMatch[1], postgresFunctionEndMatch[2], payload.endedAt); return updated ? sendJson(response, 200, { ok: true }) : sendJson(response, 404, { error: 'Função não encontrada.' }); }
   if (pathname.startsWith('/api/admin/')) {
     if (!allows(actor, 'admin')) return sendJson(response, 403, { error: 'Apenas administradores podem alterar a administração.' });
+    if (request.method === 'GET' && pathname === '/api/admin/offerings') return sendJson(response, 200, await listAdminOfferings(actor, { status: query.get('status') || null, cellId: query.get('cellId') || null, from: query.get('from') || null, to: query.get('to') || null }));
+    const offeringMatch = pathname.match(/^\/api\/admin\/offerings\/([0-9a-f-]{36})$/i);
+    const offeringStatusMatch = pathname.match(/^\/api\/admin\/offerings\/([0-9a-f-]{36})\/status$/i);
+    const offeringCorrectionMatch = pathname.match(/^\/api\/admin\/offerings\/([0-9a-f-]{36})\/correction$/i);
+    if (request.method === 'GET' && offeringMatch) return sendJson(response, 200, await getAdminOffering(actor, offeringMatch[1]));
     if (request.method === 'GET' && pathname === '/api/admin/overview') return sendJson(response, 503, { error: 'Este módulo ainda está em migração para PostgreSQL.' });
     if (request.method === 'GET' && pathname === '/api/admin/branding') {
       const branding = await getBrandingAdministration();
@@ -130,6 +172,8 @@ async function handleApi(request, response, pathname) {
     }
     if (request.method === 'GET' && pathname === '/api/admin/qrcode') { const base = process.env.PUBLIC_APP_URL || `http://${request.headers.host}`; const url = `${base.replace(/\/$/, '')}/visitante`; return sendJson(response, 200, { url, image: await QRCode.toDataURL(url, { width: 500, margin: 2 }) }); }
     const payload = await readJson(request);
+    if (request.method === 'PUT' && offeringStatusMatch) { await transitionAdminOffering(actor, offeringStatusMatch[1], payload); return sendJson(response, 200, { ok: true }); }
+    if (request.method === 'PUT' && offeringCorrectionMatch) { await correctAdminOffering(actor, offeringCorrectionMatch[1], payload); return sendJson(response, 200, { ok: true }); }
     if (request.method === 'PUT' && pathname === '/api/admin/branding/church') {
       const branding = await saveChurchBranding(actor, payload);
       if (branding === null) return sendJson(response, 503, { error: 'Configuração PostgreSQL indisponível.' });
@@ -164,8 +208,7 @@ async function handleApi(request, response, pathname) {
     return sendJson(response, 503, { error: 'Este módulo ainda está em migração para PostgreSQL.' });
   }
   if (request.method === 'POST' && pathname === '/api/referrals') {
-    if (!allows(actor, 'member', 'leader', 'welcome2', 'supervisor', 'admin')) return sendJson(response, 403, { error: 'Você não possui permissão para indicar pessoas.' });
-    return sendJson(response, 503, { error: 'Este módulo ainda está em migração para PostgreSQL.' });
+    return sendJson(response, 201, { id: await createMemberReferral(actor, payload) });
   }
   if (request.method === 'POST' && pathname === '/api/care') {
     if (!allows(actor, 'welcome2', 'admin')) return sendJson(response, 403, { error: 'Você não possui permissão para registrar acompanhamentos.' });
@@ -197,6 +240,8 @@ createServer(async (request, response) => {
       response.end(content);
     }
   } catch (error) {
-    sendJson(response, error?.status || 400, { error: error instanceof Error ? error.message : 'Não foi possível concluir a operação' });
+    const safe = publicErrorResponse(error);
+    logUnexpectedServerError(error);
+    sendJson(response, safe.status, safe.body);
   }
 }).listen(port, () => console.log(`CEM CONNECT disponível em http://localhost:${port}`));
