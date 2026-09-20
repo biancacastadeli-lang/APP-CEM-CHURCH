@@ -139,7 +139,15 @@ export async function getCareCase(actor, caseId) {
     const [records, referrals, cells] = await Promise.all([
       client.query(`select records.id,records.contact_type,records.private_note,records.next_step,records.created_at,people.full_name as responsible_name from public.care_records records left join public.app_users users on users.id=records.responsible_user_id left join public.people on people.id=users.person_id where records.care_case_id=$1 order by records.created_at desc`, [caseId]),
       client.query(`select referrals.id,referrals.delivery_status,referrals.note_for_cell,referrals.return_note,referrals.created_at,cells.name as cell_name from public.cell_referrals referrals join public.cells on cells.id=referrals.cell_id where referrals.care_case_id=$1 order by referrals.created_at desc`, [caseId]),
-      client.query(`select cells.id,cells.name,cells.weekday,cells.meeting_time,cells.address_line,cells.neighborhood,leader_people.full_name as leader_name from public.cells cells left join public.cell_leaderships leaders on leaders.cell_id=cells.id and leaders.ended_at is null left join public.people leader_people on leader_people.id=leaders.person_id where cells.is_active order by cells.name`)
+      client.query(`select cells.id,cells.name,cells.weekday,cells.meeting_time,cells.address_line,cells.neighborhood,
+        coalesce(leaders.leader_name,'Liderança pendente') as leader_name
+        from public.cells cells
+        left join lateral (
+          select string_agg(people.full_name,' · ' order by people.full_name) as leader_name
+          from public.cell_leaderships links join public.people people on people.id=links.person_id
+          where links.cell_id=cells.id and links.ended_at is null
+        ) leaders on true
+        where cells.is_active order by cells.name`)
     ]);
     const row = header.rows[0];
     return { careCase: { id: row.id, status: row.status, nextStep: row.next_step || '', responsibleName: row.responsible_name || null, subject: { type: row.visitor_id ? 'visitor' : 'referral', id: row.visitor_id || row.referral_id, fullName: row.full_name, whatsapp: row.whatsapp, source: row.source || 'Indicação de membro', receptionStatus: row.reception_status || null, referrerName: row.referrer_name || null, referrerNote: row.referrer_note || '' } }, records: records.rows.map((record) => ({ id: record.id, contactType: record.contact_type, privateNote: record.private_note, nextStep: record.next_step, createdAt: record.created_at, responsibleName: record.responsible_name || null })), referrals: referrals.rows.map((referral) => ({ id: referral.id, status: referral.delivery_status, noteForCell: referral.note_for_cell, returnNote: referral.return_note, createdAt: referral.created_at, cellName: referral.cell_name })), cells: cells.rows.map((cell) => ({ id: cell.id, name: cell.name, weekday: cell.weekday, meetingTime: cell.meeting_time, addressLine: cell.address_line, neighborhood: cell.neighborhood, leaderName: cell.leader_name || 'Liderança pendente' })) };

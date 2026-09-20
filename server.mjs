@@ -5,11 +5,14 @@ import QRCode from 'qrcode';
 import { getBrandingAdministration, getPublicBranding, saveAnnualTheme, saveChurchBranding } from './src/server/postgres-branding.mjs';
 import { actorFromPostgresSession, authenticatePostgres, createPostgresSession, revokePostgresSession } from './src/server/postgres-auth.mjs';
 import { getOwnProfile, profileBootstrap, updateOwnProfile } from './src/server/postgres-profile.mjs';
-import { addCellFunction, addMember, addSecretary, assignChurchFunction, createCell, createPerson, endCellFunction, endChurchFunction, endMember, endSecretary, getCell, getPerson, listCells, listPeople, setJourneyModule, setLeader, updateCell, updatePerson } from './src/server/postgres-people-cells.mjs';
+import { addCellFunction, addMember, addSecretary, assignChurchFunction, createCell, createPerson, endCellFunction, endChurchFunction, endMember, endSecretary, getCell, getPerson, grantPersonAccess, listCells, listPeople, personPhotoAsset, removePersonPhotoReference, revokePersonAccess, setJourneyModule, setLeader, setPersonImageConsent, setPersonPhotoReference, updateCell, updatePerson } from './src/server/postgres-people-cells.mjs';
+import { addMinistrySupervisor, addWelcomeTeamMember, createMinistry, endMinistrySupervisor, getSupervisor, listTeams, removeWelcomeTeamMember } from './src/server/postgres-teams.mjs';
 import { createMeeting, getMeetingDetail, getMyCell, publishMeetingPhoto, registerMeetingVisitor, returnCellReferral, saveAttendance, saveMeetingOffering, updateMeeting, updateMemberJourney } from './src/server/postgres-my-cell.mjs';
 import { correctAdminOffering, getAdminOffering, listAdminOfferings, transitionAdminOffering } from './src/server/postgres-offerings.mjs';
 import { addCareRecord, createMemberReferral, createPublicPreRegistration, createReceptionVisitor, getCareCase, listCareReferrals, listCareVisitors, listReceptionVisitors, openCareCase, openReferralCareCase, referCareCaseToCell, updateCareCase, updateReceptionVisitor } from './src/server/postgres-welcome.mjs';
 import { logUnexpectedServerError, publicErrorResponse } from './src/server/http-errors.mjs';
+import { uploadBrandingImage } from './src/server/supabase-storage.mjs';
+import { normalizePersonPhotoAsset, readPersonPhoto, removePersonPhoto, uploadPersonPhoto } from './src/server/supabase-person-photos.mjs';
 
 const port = Number(process.env.PORT || 3000);
 const root = process.cwd();
@@ -20,6 +23,10 @@ const loginAttempts = new Map();
 function sendJson(response, status, value, headers = {}) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', ...headers });
   response.end(JSON.stringify(value));
+}
+function sendBinary(response, status, buffer, contentType) {
+  response.writeHead(status, { 'Content-Type': contentType, 'Cache-Control': 'private, max-age=300', 'Content-Length': buffer.length });
+  response.end(buffer);
 }
 
 function cookieValue(request, name) {
@@ -130,10 +137,23 @@ async function handleApi(request, response, pathname) {
   if (request.method === 'GET' && pathname === '/api/people') return sendJson(response, 200, { people: await listPeople(actor, new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`).searchParams.get('q') || '') });
   if (request.method === 'POST' && pathname === '/api/people') { const payload = await readJson(request); return sendJson(response, 201, { id: await createPerson(actor, payload) }); }
   const personMatch = pathname.match(/^\/api\/people\/([0-9a-f-]{36})$/i);
+  const personPhotoMatch = pathname.match(/^\/api\/people\/([0-9a-f-]{36})\/photo$/i);
+  const personConsentMatch = pathname.match(/^\/api\/people\/([0-9a-f-]{36})\/image-consent$/i);
+  const personAccessMatch = pathname.match(/^\/api\/people\/([0-9a-f-]{36})\/access$/i);
   const personJourneyMatch = pathname.match(/^\/api\/people\/([0-9a-f-]{36})\/journey$/i);
   const personChurchFunctionMatch = pathname.match(/^\/api\/people\/([0-9a-f-]{36})\/functions\/church$/i);
   const personChurchFunctionEndMatch = pathname.match(/^\/api\/people\/([0-9a-f-]{36})\/functions\/church\/([0-9a-f-]{36})$/i);
   if (request.method === 'GET' && personMatch) { const person = await getPerson(actor, personMatch[1]); return person ? sendJson(response, 200, person) : sendJson(response, 404, { error: 'Pessoa não encontrada.' }); }
+  if (request.method === 'GET' && personPhotoMatch) { const asset = await personPhotoAsset(actor, personPhotoMatch[1]); if (!asset) return sendJson(response, 404, { error: 'Foto não encontrada.' }); const photo = await readPersonPhoto(asset); return sendBinary(response, 200, photo.buffer, photo.contentType); }
+  if (request.method === 'POST' && personConsentMatch) { const payload = await readJson(request); const updated = await setPersonImageConsent(actor, personConsentMatch[1], payload.authorized === true); return updated ? sendJson(response, 200, { ok: true }) : sendJson(response, 404, { error: 'Pessoa não encontrada.' }); }
+  if (request.method === 'POST' && personPhotoMatch) {
+    const asset = await uploadPersonPhoto(request);
+    try { const updated = await setPersonPhotoReference(actor, personPhotoMatch[1], normalizePersonPhotoAsset(asset)); if (!updated) { await removePersonPhoto(asset).catch(() => {}); return sendJson(response, 404, { error: 'Pessoa não encontrada.' }); } if (updated.previous) await removePersonPhoto(updated.previous).catch(() => {}); return sendJson(response, 201, { ok: true }); }
+    catch (error) { await removePersonPhoto(asset).catch(() => {}); throw error; }
+  }
+  if (request.method === 'DELETE' && personPhotoMatch) { const updated = await removePersonPhotoReference(actor, personPhotoMatch[1]); if (!updated) return sendJson(response, 404, { error: 'Pessoa não encontrada.' }); if (updated.previous) await removePersonPhoto(updated.previous).catch(() => {}); return sendJson(response, 200, { ok: true }); }
+  if (request.method === 'POST' && personAccessMatch) { const granted = await grantPersonAccess(actor, personAccessMatch[1], await readJson(request)); return granted ? sendJson(response, 201, { ok: true }) : sendJson(response, 404, { error: 'Pessoa não encontrada.' }); }
+  if (request.method === 'DELETE' && personAccessMatch) { const revoked = await revokePersonAccess(actor, personAccessMatch[1]); return revoked ? sendJson(response, 200, { ok: true }) : sendJson(response, 404, { error: 'Acesso não encontrado.' }); }
   if (request.method === 'PUT' && personMatch) { const payload = await readJson(request); const updated = await updatePerson(actor, personMatch[1], payload); return updated ? sendJson(response, 200, { ok: true }) : sendJson(response, 404, { error: 'Pessoa não encontrada.' }); }
   if (request.method === 'PUT' && personJourneyMatch) { const payload = await readJson(request); const updated = await setJourneyModule(actor, personJourneyMatch[1], payload); return updated ? sendJson(response, 200, { ok: true }) : sendJson(response, 404, { error: 'Pessoa não encontrada.' }); }
   if (request.method === 'POST' && personChurchFunctionMatch) { const payload = await readJson(request); await assignChurchFunction(actor, personChurchFunctionMatch[1], payload); return sendJson(response, 201, { ok: true }); }
@@ -160,6 +180,16 @@ async function handleApi(request, response, pathname) {
   if (pathname.startsWith('/api/admin/')) {
     if (!allows(actor, 'admin')) return sendJson(response, 403, { error: 'Apenas administradores podem alterar a administração.' });
     if (request.method === 'GET' && pathname === '/api/admin/offerings') return sendJson(response, 200, await listAdminOfferings(actor, { status: query.get('status') || null, cellId: query.get('cellId') || null, from: query.get('from') || null, to: query.get('to') || null }));
+    if (request.method === 'GET' && pathname === '/api/admin/teams') return sendJson(response, 200, await listTeams(actor));
+    if (request.method === 'POST' && pathname === '/api/admin/ministries') { const payload = await readJson(request); return sendJson(response, 201, { id: await createMinistry(actor, payload) }); }
+    if (request.method === 'POST' && pathname === '/api/admin/supervisors') { const payload = await readJson(request); return sendJson(response, 201, { id: await addMinistrySupervisor(actor, payload) }); }
+    const teamSupervisorMatch = pathname.match(/^\/api\/admin\/supervisors\/([0-9a-f-]{36})$/i);
+    const welcomeTeamMemberMatch = pathname.match(/^\/api\/admin\/welcome-teams\/(welcome1|welcome2)\/members\/([0-9a-f-]{36})$/i);
+    const welcomeTeamMatch = pathname.match(/^\/api\/admin\/welcome-teams\/(welcome1|welcome2)\/members$/i);
+    if (request.method === 'GET' && teamSupervisorMatch) { const supervisor = await getSupervisor(actor, teamSupervisorMatch[1]); return supervisor ? sendJson(response, 200, supervisor) : sendJson(response, 404, { error: 'Supervisor não encontrado.' }); }
+    if (request.method === 'DELETE' && teamSupervisorMatch) { const payload = await readJson(request); const ended = await endMinistrySupervisor(actor, teamSupervisorMatch[1], payload); return ended ? sendJson(response, 200, { ok: true }) : sendJson(response, 404, { error: 'Supervisor não encontrado.' }); }
+    if (request.method === 'POST' && welcomeTeamMatch) { const payload = await readJson(request); await addWelcomeTeamMember(actor, welcomeTeamMatch[1], payload); return sendJson(response, 201, { ok: true }); }
+    if (request.method === 'DELETE' && welcomeTeamMemberMatch) { const removed = await removeWelcomeTeamMember(actor, welcomeTeamMemberMatch[1], welcomeTeamMemberMatch[2]); return removed ? sendJson(response, 200, { ok: true }) : sendJson(response, 404, { error: 'Integrante não encontrado.' }); }
     const offeringMatch = pathname.match(/^\/api\/admin\/offerings\/([0-9a-f-]{36})$/i);
     const offeringStatusMatch = pathname.match(/^\/api\/admin\/offerings\/([0-9a-f-]{36})\/status$/i);
     const offeringCorrectionMatch = pathname.match(/^\/api\/admin\/offerings\/([0-9a-f-]{36})\/correction$/i);
@@ -171,6 +201,10 @@ async function handleApi(request, response, pathname) {
       return sendJson(response, 200, branding);
     }
     if (request.method === 'GET' && pathname === '/api/admin/qrcode') { const base = process.env.PUBLIC_APP_URL || `http://${request.headers.host}`; const url = `${base.replace(/\/$/, '')}/visitante`; return sendJson(response, 200, { url, image: await QRCode.toDataURL(url, { width: 500, margin: 2 }) }); }
+    if (request.method === 'POST' && pathname === '/api/admin/branding/assets') {
+      const asset = await uploadBrandingImage(request, query.get('kind'));
+      return sendJson(response, 201, { asset });
+    }
     const payload = await readJson(request);
     if (request.method === 'PUT' && offeringStatusMatch) { await transitionAdminOffering(actor, offeringStatusMatch[1], payload); return sendJson(response, 200, { ok: true }); }
     if (request.method === 'PUT' && offeringCorrectionMatch) { await correctAdminOffering(actor, offeringCorrectionMatch[1], payload); return sendJson(response, 200, { ok: true }); }

@@ -7,6 +7,9 @@ const branding = readFileSync(resolve('supabase/migrations/20260919110000_add_co
 const birthDate = readFileSync(resolve('supabase/migrations/20260919120000_add_people_birth_date.sql'), 'utf8');
 const peopleAndFunctions = readFileSync(resolve('supabase/migrations/20260919130000_add_people_and_ministry_functions.sql'), 'utf8');
 const meetingTime = readFileSync(resolve('supabase/migrations/20260919140000_add_meeting_time.sql'), 'utf8');
+const brandingStorage = readFileSync(resolve('supabase/migrations/20260919150000_add_branding_storage.sql'), 'utf8');
+const organizationalTeams = readFileSync(resolve('supabase/migrations/20260919160000_add_organizational_teams.sql'), 'utf8');
+const personAccessPhotos = readFileSync(resolve('supabase/migrations/20260919170000_add_person_access_and_private_photos.sql'), 'utf8');
 const required = [
   'create table public.people', 'create table public.app_users', 'create table public.user_roles',
   'create table public.cells', 'create table public.cell_memberships', 'create table public.cell_leaderships',
@@ -97,5 +100,38 @@ if (!meetingTime.includes('add column meeting_time time null')) {
 }
 if (/(default|update public\.cell_meetings|insert into public\.cell_meetings|supabase_url|service_role|anon_key|postgres:\/\/[^\s]+|password\s*=\s*['\"]\S+)/i.test(meetingTime)) {
   throw new Error('Migration de horário da reunião não pode preencher reuniões, criar valor padrão ou conter credenciais.');
+}
+const brandingStorageRequired = [
+  'add column logo_storage_bucket text', 'add column logo_storage_path text',
+  'church_branding_logo_storage_pair_check', 'annual_themes_banner_storage_pair_check',
+  "'church-branding-assets'", 'insert into storage.buckets', 'file_size_limit',
+  "'image/png'", "'image/jpeg'", "'image/webp'"
+];
+const missingBrandingStorage = brandingStorageRequired.filter((value) => !brandingStorage.includes(value));
+if (missingBrandingStorage.length) throw new Error(`Migration de Storage da identidade incompleta: ${missingBrandingStorage.join(', ')}`);
+if (brandingStorage.includes('alter table storage.objects enable row level security')) {
+  throw new Error('Migration de Storage não pode alterar a tabela gerenciada storage.objects.');
+}
+if (/create policy|supabase_url|service_role|anon_key|postgres:\/\/[^\s]+|password\s*=\s*['\"]\S+/i.test(brandingStorage)) {
+  throw new Error('Migration de Storage não pode conter credenciais ou policies permissivas.');
+}
+const organizationalTeamsRequired = [
+  'create table public.ministries', 'create table public.ministry_supervisor_assignments', 'create table public.cell_supervisor_assignments',
+  'add column ministry_id uuid', 'cell_leaderships_one_active_person_per_cell', 'drop index public.cell_leaderships_one_current_leader',
+  "('Família')", "('Jovens')", "('Mulheres')", "('Kids')", 'enable row level security'
+];
+const missingOrganizationalTeams = organizationalTeamsRequired.filter((value) => !organizationalTeams.includes(value));
+if (missingOrganizationalTeams.length) throw new Error(`Migration organizacional incompleta: ${missingOrganizationalTeams.join(', ')}`);
+if (/(insert into public\.(people|cells|app_users|user_roles)|supabase_url|service_role|anon_key|postgres:\/\/[^\s]+|password\s*=\s*['\"]\S+)/i.test(organizationalTeams)) {
+  throw new Error('Migration organizacional não pode conter dados pessoais ou credenciais.');
+}
+const personAccessPhotosRequired = [
+  'add column photo_storage_bucket text', 'add column photo_storage_path text', 'people_photo_storage_pair_check',
+  "'person-profile-photos'", "false,", "'image/png'", "'image/jpeg'", "'image/webp'"
+];
+const missingPersonAccessPhotos = personAccessPhotosRequired.filter((value) => !personAccessPhotos.includes(value));
+if (missingPersonAccessPhotos.length) throw new Error(`Migration de fotos pessoais incompleta: ${missingPersonAccessPhotos.join(', ')}`);
+if (/alter\s+table\s+storage\.objects|create policy|insert into public\.(people|app_users|user_roles)|supabase_url|service_role|anon_key|postgres:\/\/[^\s]+|password\s*=\s*['"]\S+/i.test(personAccessPhotos)) {
+  throw new Error('Migration de fotos pessoais não pode conter dados pessoais, credenciais ou policies permissivas.');
 }
 console.log('Verificação da migration PostgreSQL concluída.');
