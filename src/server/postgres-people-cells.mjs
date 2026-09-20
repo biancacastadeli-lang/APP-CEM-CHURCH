@@ -5,27 +5,33 @@ import { passwordHash } from './postgres-auth.mjs';
 const personStatuses = new Set(['member', 'visitor', 'integrating', 'inactive', 'transferred']);
 const cellFunctionCodes = new Set(['host', 'social_assistant']);
 
+function validationError(message, status = 400) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
 function text(value, label, maxLength, { optional = true } = {}) {
   if (value == null || value === '') {
     if (optional) return null;
-    throw new Error(`${label} é obrigatório.`);
+    throw validationError(`${label} é obrigatório.`);
   }
-  if (typeof value !== 'string') throw new Error(`${label} é inválido.`);
+  if (typeof value !== 'string') throw validationError(`${label} é inválido.`);
   const normalized = value.trim();
   if (!normalized && optional) return null;
-  if (!normalized || normalized.length > maxLength) throw new Error(`${label} é inválido.`);
+  if (!normalized || normalized.length > maxLength) throw validationError(`${label} é inválido.`);
   return normalized;
 }
 
 function whatsapp(value) {
   const normalized = String(value || '').replace(/\D/g, '');
-  if (normalized.length < 10 || normalized.length > 13) throw new Error('WhatsApp inválido.');
+  if (normalized.length < 10 || normalized.length > 13) throw validationError('WhatsApp inválido.');
   return normalized;
 }
 
 function email(value) {
   const normalized = text(value, 'E-mail', 254);
-  if (normalized && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) throw new Error('E-mail inválido.');
+  if (normalized && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) throw validationError('E-mail inválido.');
   return normalized?.toLowerCase() ?? null;
 }
 
@@ -36,32 +42,32 @@ function date(value, label, { optional = true } = {}) {
   }
   const normalized = String(value).trim();
   const parsed = new Date(`${normalized}T00:00:00Z`);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized) || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== normalized) throw new Error(`${label} inválida.`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized) || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== normalized) throw validationError(`${label} inválida.`);
   return normalized;
 }
 
 function uuid(value, label) {
   const normalized = String(value || '').trim();
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)) throw new Error(`${label} inválido.`);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)) throw validationError(`${label} inválido.`);
   return normalized;
 }
 
 function personIds(value) {
   const values = Array.isArray(value) ? value : String(value || '').split(',');
   const unique = [...new Set(values.filter(Boolean).map((item) => uuid(item, 'Liderança')))];
-  if (unique.length > 8) throw new Error('Uma célula pode possuir no máximo oito lideranças ativas.');
+  if (unique.length > 8) throw validationError('Uma célula pode possuir no máximo oito lideranças ativas.');
   return unique;
 }
 
 function personInput(input) {
   const status = input.personStatus == null || input.personStatus === '' ? null : String(input.personStatus).trim().toLowerCase();
-  if (status && !personStatuses.has(status)) throw new Error('Situação da pessoa inválida.');
+  if (status && !personStatuses.has(status)) throw validationError('Situação da pessoa inválida.');
   const sex = input.sex == null || input.sex === '' ? null : String(input.sex).trim().toLowerCase();
-  if (sex && !['female', 'male'].includes(sex)) throw new Error('Sexo inválido.');
+  if (sex && !['female', 'male'].includes(sex)) throw validationError('Sexo inválido.');
   const state = text(input.state, 'Estado', 2)?.toUpperCase() ?? null;
-  if (state && !/^[A-Z]{2}$/.test(state)) throw new Error('Estado inválido.');
+  if (state && !/^[A-Z]{2}$/.test(state)) throw validationError('Estado inválido.');
   const postalCode = text(input.postalCode, 'CEP', 20)?.replace(/\D/g, '') ?? null;
-  if (postalCode && postalCode.length !== 8) throw new Error('CEP inválido.');
+  if (postalCode && postalCode.length !== 8) throw validationError('CEP inválido.');
   return {
     fullName: text(input.fullName ?? input.name, 'Nome completo', 120, { optional: false }),
     whatsapp: whatsapp(input.whatsapp), email: email(input.email), birthDate: date(input.birthDate, 'Data de nascimento'), sex,
@@ -73,11 +79,11 @@ function personInput(input) {
 
 function cellInput(input) {
   const weekday = Number(input.weekday);
-  if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) throw new Error('Dia da semana inválido.');
+  if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) throw validationError('Selecione o dia da reunião.');
   const meetingTime = String(input.meetingTime || '').trim();
-  if (!/^\d{2}:\d{2}(:\d{2})?$/.test(meetingTime)) throw new Error('Horário inválido.');
+  if (!/^\d{2}:\d{2}(:\d{2})?$/.test(meetingTime)) throw validationError('Informe o horário da reunião.');
   const state = text(input.state, 'Estado', 2, { optional: false })?.toUpperCase();
-  if (!/^[A-Z]{2}$/.test(state)) throw new Error('Estado inválido.');
+  if (!/^[A-Z]{2}$/.test(state)) throw validationError('Estado inválido.');
   return {
     name: text(input.name, 'Nome da célula', 120, { optional: false }), weekday, meetingTime,
     addressLine: text(input.addressLine, 'Local/endereço', 180, { optional: false }), neighborhood: text(input.neighborhood, 'Bairro', 100, { optional: false }),
@@ -383,31 +389,50 @@ async function syncCellSupervisor(client, cellId, supervisorPersonId, startedAt)
   if (supervisorPersonId) await client.query('insert into public.cell_supervisor_assignments (cell_id,person_id,started_at) values ($1,$2,$3)', [cellId, supervisorPersonId, startedAt]);
 }
 
+async function assertCellLinksAreValid(client, ministryId, supervisorPersonId, leaderIds) {
+  if (leaderIds.length) {
+    const people = await client.query('select id from public.people where id = any($1::uuid[])', [leaderIds]);
+    if (people.rowCount !== leaderIds.length) throw validationError('Uma das lideranças selecionadas não está mais disponível.');
+  }
+  if (!supervisorPersonId) return;
+  const supervisor = await client.query(
+    `select 1
+       from public.ministry_supervisor_assignments
+      where ministry_id = $1 and person_id = $2 and ended_at is null`,
+    [ministryId, supervisorPersonId]
+  );
+  if (!supervisor.rowCount) {
+    throw validationError('Selecione uma pessoa vinculada como Supervisora ao mesmo ministério.');
+  }
+}
+
 export async function createCell(actor, input) {
   requireAdmin(actor); const values = cellInput(input); const startedAt = date(input.startedAt, 'Data de início', { optional: false });
   return withTransaction(async (client) => {
     const ministry = await client.query('select id from public.ministries where id=$1 and is_active', [values.ministryId]);
-    if (!ministry.rowCount) throw new Error('Ministério não encontrado ou inativo.');
+    if (!ministry.rowCount) throw validationError('Selecione um ministério ativo.');
+    await assertCellLinksAreValid(client, values.ministryId, values.supervisorPersonId, values.leaderIds);
     const result = await client.query(`insert into public.cells (name,weekday,meeting_time,address_line,neighborhood,city,state,is_active,ministry_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`, [values.name, values.weekday, values.meetingTime, values.addressLine, values.neighborhood, values.city, values.state, values.isActive, values.ministryId]);
     await syncLeaders(client, result.rows[0].id, values.leaderIds, startedAt);
     await syncCellSupervisor(client, result.rows[0].id, values.supervisorPersonId, startedAt);
     await audit(client, actor, 'create_cell', 'cell', result.rows[0].id, 'Célula cadastrada.', { fields: ['name', 'ministry', 'schedule', 'address', 'is_active'], ministryId: values.ministryId });
     return result.rows[0].id;
-  }).catch((error) => { if (error?.code === '23505') throw new Error('Já existe uma célula com este nome ou vínculo ativo.'); throw error; });
+  }).catch((error) => { if (error?.code === '23505') throw validationError('Já existe uma célula com este nome ou vínculo ativo.', 409); throw error; });
 }
 
 export async function updateCell(actor, cellId, input) {
   requireAdmin(actor); const values = cellInput(input); const startedAt = date(input.startedAt, 'Data de início', { optional: false });
   return withTransaction(async (client) => {
     const ministry = await client.query('select id from public.ministries where id=$1 and is_active', [values.ministryId]);
-    if (!ministry.rowCount) throw new Error('Ministério não encontrado ou inativo.');
+    if (!ministry.rowCount) throw validationError('Selecione um ministério ativo.');
     const result = await client.query(`update public.cells set name=$1,weekday=$2,meeting_time=$3,address_line=$4,neighborhood=$5,city=$6,state=$7,is_active=$8,ministry_id=$9 where id=$10 returning id`, [values.name, values.weekday, values.meetingTime, values.addressLine, values.neighborhood, values.city, values.state, values.isActive, values.ministryId, cellId]);
     if (!result.rowCount) return false;
+    await assertCellLinksAreValid(client, values.ministryId, values.supervisorPersonId, values.leaderIds);
     await syncLeaders(client, cellId, values.leaderIds, startedAt);
     await syncCellSupervisor(client, cellId, values.supervisorPersonId, startedAt);
     await audit(client, actor, 'update_cell', 'cell', cellId, 'Dados organizacionais da célula atualizados.', { fields: ['name', 'ministry', 'schedule', 'address', 'is_active'], ministryId: values.ministryId });
     return true;
-  }).catch((error) => { if (error?.code === '23505') throw new Error('Já existe uma célula com este nome ou vínculo ativo.'); throw error; });
+  }).catch((error) => { if (error?.code === '23505') throw validationError('Já existe uma célula com este nome ou vínculo ativo.', 409); throw error; });
 }
 
 export async function addMember(actor, cellId, input) { requireAdmin(actor); const personId=String(input.personId||''); const startedAt=date(input.startedAt,'Data de início',{optional:false}); if(!personId)throw new Error('Pessoa inválida.'); return withTransaction(async(client)=>{const target=await client.query('select id from public.cells where id=$1',[cellId]);if(!target.rowCount)throw new Error('Célula não encontrada.');const active=await client.query(`select links.id,links.cell_id,cells.name from public.cell_memberships links join public.cells cells on cells.id=links.cell_id where links.person_id=$1 and links.ended_at is null for update`,[personId]);if(active.rowCount){if(active.rows[0].cell_id===cellId)throw new Error('A pessoa já participa desta célula.');if(input.transfer!==true){const error=new Error(`A pessoa já pertence à célula ${active.rows[0].name}. Confirme a transferência para continuar.`);error.status=409;throw error;}await client.query('update public.cell_memberships set ended_at=$1 where id=$2',[startedAt,active.rows[0].id]);}await client.query('insert into public.cell_memberships (cell_id,person_id,started_at) values ($1,$2,$3)',[cellId,personId,startedAt]);await audit(client,actor,active.rowCount?'transfer_membership':'add_membership','cell',cellId,active.rowCount?'Membresia transferida.':'Participante incluído.',{personId});return true;}); }

@@ -6,6 +6,7 @@ export const defaultBranding = Object.freeze({
   applicationName: 'CEM CONNECT',
   churchName: 'CEM Church',
   logoUrl: '',
+  backgroundUrl: '',
   annualTheme: {
     name: 'Legado',
     subtitle: 'a luz da tua presença',
@@ -30,6 +31,7 @@ export function resolveBranding(remoteBranding) {
     applicationName: typeof remote.applicationName === 'string' && remote.applicationName.trim() ? remote.applicationName.trim() : defaultBranding.applicationName,
     churchName: typeof remote.churchName === 'string' && remote.churchName.trim() ? remote.churchName.trim() : defaultBranding.churchName,
     logoUrl: typeof remote.logoUrl === 'string' ? remote.logoUrl.trim() : '',
+    backgroundUrl: typeof remote.backgroundUrl === 'string' && /^https:\/\/[^\s]+$/i.test(remote.backgroundUrl) ? remote.backgroundUrl.trim() : '',
     annualTheme: {
       name: typeof remoteTheme.name === 'string' && remoteTheme.name.trim() ? remoteTheme.name.trim() : defaultBranding.annualTheme.name,
       subtitle: typeof remoteTheme.subtitle === 'string' && remoteTheme.subtitle.trim() ? remoteTheme.subtitle.trim() : defaultBranding.annualTheme.subtitle,

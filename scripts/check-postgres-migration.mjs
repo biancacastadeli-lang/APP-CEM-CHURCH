@@ -10,6 +10,7 @@ const meetingTime = readFileSync(resolve('supabase/migrations/20260919140000_add
 const brandingStorage = readFileSync(resolve('supabase/migrations/20260919150000_add_branding_storage.sql'), 'utf8');
 const organizationalTeams = readFileSync(resolve('supabase/migrations/20260919160000_add_organizational_teams.sql'), 'utf8');
 const personAccessPhotos = readFileSync(resolve('supabase/migrations/20260919170000_add_person_access_and_private_photos.sql'), 'utf8');
+const appBackground = readFileSync(resolve('supabase/migrations/20260919180000_add_app_background_asset.sql'), 'utf8');
 const required = [
   'create table public.people', 'create table public.app_users', 'create table public.user_roles',
   'create table public.cells', 'create table public.cell_memberships', 'create table public.cell_leaderships',
@@ -133,5 +134,13 @@ const missingPersonAccessPhotos = personAccessPhotosRequired.filter((value) => !
 if (missingPersonAccessPhotos.length) throw new Error(`Migration de fotos pessoais incompleta: ${missingPersonAccessPhotos.join(', ')}`);
 if (/alter\s+table\s+storage\.objects|create policy|insert into public\.(people|app_users|user_roles)|supabase_url|service_role|anon_key|postgres:\/\/[^\s]+|password\s*=\s*['"]\S+/i.test(personAccessPhotos)) {
   throw new Error('Migration de fotos pessoais não pode conter dados pessoais, credenciais ou policies permissivas.');
+}
+const appBackgroundRequired = [
+  'add column if not exists background_storage_bucket text', 'add column if not exists background_storage_path text',
+  'church_branding_background_storage_pair_check', "background_storage_bucket = 'church-branding-assets'"
+];
+const missingAppBackground = appBackgroundRequired.filter((value) => !appBackground.includes(value));
+if (missingAppBackground.length || /alter\s+table\s+storage\.objects|create policy|insert into public\.|supabase_url|service_role|anon_key|postgres:\/\/[^\s]+|password\s*=\s*['"]\S+/i.test(appBackground)) {
+  throw new Error(`Migration de fundo do aplicativo inválida: ${missingAppBackground.join(', ')}`);
 }
 console.log('Verificação da migration PostgreSQL concluída.');

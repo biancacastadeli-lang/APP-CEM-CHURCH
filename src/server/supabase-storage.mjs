@@ -8,8 +8,8 @@ const imageTypes = new Map([
   ['image/jpeg', { extension: 'jpg', valid: (buffer) => buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff }],
   ['image/webp', { extension: 'webp', valid: (buffer) => buffer.length >= 12 && buffer.subarray(0, 4).equals(Buffer.from('RIFF')) && buffer.subarray(8, 12).equals(Buffer.from('WEBP')) }]
 ]);
-const kinds = new Set(['logo', 'banner']);
-const assetPath = /^(logo|banner)\/[0-9a-f-]{36}\.(png|jpe?g|webp)$/;
+const kinds = new Set(['logo', 'banner', 'background']);
+const assetPath = /^(logo|banner|background)\/[0-9a-f-]{36}\.(png|jpe?g|webp)$/;
 
 function controlledError(message, status = 400) {
   const error = new Error(message);
@@ -106,7 +106,9 @@ export async function uploadBrandingImage(request, kind) {
 
 export async function removeBrandingImage(asset) {
   if (!asset?.bucket || !asset?.path) return;
-  const normalized = normalizeBrandingAsset(asset, String(asset.path).startsWith('banner/') ? 'banner' : 'logo');
+  const path = String(asset.path);
+  const kind = path.startsWith('banner/') ? 'banner' : path.startsWith('background/') ? 'background' : 'logo';
+  const normalized = normalizeBrandingAsset(asset, kind);
   await storageRequest(`/storage/v1/object/${BRANDING_BUCKET}`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },

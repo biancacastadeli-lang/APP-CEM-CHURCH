@@ -31,3 +31,4 @@ somente bucket e caminho; não há imagens em base64 no PostgreSQL.
 Ordem de aplicação para este conjunto pendente: `20260919150000`,
 `20260919160000` e, por último, `20260919170000`. Nenhuma dessas migrations
 deve ser aplicada automaticamente pelo aplicativo.
+8. `20260919180000_add_app_background_asset.sql` adiciona referência opcional para o fundo público da interface. Aplique manualmente somente após revisão; o bucket `church-branding-assets` já existe.

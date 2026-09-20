@@ -23,8 +23,12 @@ assert.ok(teams.includes("requireAdmin(actor)"), 'As operações de Equipes deve
 assert.ok(teams.includes("welcomeRoles"), 'Boas-Vindas deve continuar usando papéis existentes.');
 assert.ok(peopleCells.includes('syncLeaders'), 'A atualização de lideranças deve preservar múltiplos vínculos.');
 assert.ok(peopleCells.includes('cell_supervisor_assignments'), 'O escopo organizacional de Supervisor deve ser considerado.');
+assert.ok(peopleCells.includes('assertCellLinksAreValid'), 'O vínculo entre Supervisor e ministério deve ser validado antes da gravação.');
+assert.ok(peopleCells.includes("validationError('Selecione uma pessoa vinculada como Supervisora ao mesmo ministério.')"), 'O conflito de Supervisor deve retornar uma mensagem controlada.');
 assert.ok(welcome.includes('string_agg(people.full_name'), 'Encaminhamentos devem suportar múltiplas lideranças sem duplicar células.');
 assert.ok(app.includes("'teams'"), 'A área Equipes deve estar presente no frontend.');
 assert.ok(app.includes('personPicker'), 'A seleção de pessoas precisa suportar busca visual.');
+assert.ok(app.includes("el.dataset.pickerMultiple === 'true'"), 'Seletores únicos não podem acumular pessoas.');
+assert.ok(app.includes("Selecione o ministério da célula."), 'O formulário deve validar o ministério antes de enviar.');
 
 console.log('Validação estática: estrutura organizacional e Equipes passaram.');

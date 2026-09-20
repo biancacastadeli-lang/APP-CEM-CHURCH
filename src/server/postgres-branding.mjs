@@ -1,49 +1,60 @@
 import { getPostgresPool, isPostgresConfigured } from './postgres.mjs';
-import { normalizeBrandingAsset, removeBrandingImage } from './supabase-storage.mjs';
+import { normalizeBrandingAsset, publicBrandingAssetUrl, removeBrandingImage } from './supabase-storage.mjs';
 
 const colorKeys = new Set(['primary', 'secondary', 'accent', 'background', 'text']);
 const hexColor = /^#[0-9a-f]{6}$/i;
 const httpsUrl = /^https:\/\/[^\s]+$/i;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function validationError(message) {
+  const error = new Error(message);
+  error.status = 400;
+  return error;
+}
+
 function text(value, label, maxLength, { optional = false } = {}) {
   if (value == null || value === '') {
     if (optional) return null;
-    throw new Error(`${label} é obrigatório.`);
+    throw validationError(`${label} é obrigatório.`);
   }
-  if (typeof value !== 'string') throw new Error(`${label} é inválido.`);
+  if (typeof value !== 'string') throw validationError(`${label} é inválido.`);
   const normalized = value.trim();
   if (!normalized && optional) return null;
-  if (!normalized || normalized.length > maxLength) throw new Error(`${label} é inválido.`);
+  if (!normalized || normalized.length > maxLength) throw validationError(`${label} é inválido.`);
   return normalized;
 }
 
 function optionalHttpsUrl(value, label) {
   if (value == null || value === '') return null;
   const normalized = text(value, label, 1000);
-  if (!httpsUrl.test(normalized)) throw new Error(`${label} deve usar uma URL HTTPS válida.`);
+  if (!httpsUrl.test(normalized)) throw validationError(`${label} deve usar uma URL HTTPS válida.`);
   return normalized;
 }
 
 function colors(value) {
   if (value == null || value === '') return null;
-  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('As cores são inválidas.');
+  if (typeof value !== 'object' || Array.isArray(value)) throw validationError('As cores são inválidas.');
   const entries = Object.entries(value);
   if (entries.some(([key, color]) => !colorKeys.has(key) || typeof color !== 'string' || !hexColor.test(color))) {
-    throw new Error('As cores devem usar somente os campos visuais permitidos e valores hexadecimais.');
+    throw validationError('As cores devem usar somente os campos visuais permitidos e valores hexadecimais.');
   }
   return Object.fromEntries(entries);
 }
 
 function year(value) {
   const normalized = Number(value);
-  if (!Number.isInteger(normalized) || normalized < 2000 || normalized > 2100) throw new Error('Ano inválido.');
+  if (!Number.isInteger(normalized) || normalized < 2000 || normalized > 2100) throw validationError('Ano inválido.');
   return normalized;
 }
 
 function active(value) {
-  if (typeof value !== 'boolean') throw new Error('Situação do tema inválida.');
+  if (typeof value !== 'boolean') throw validationError('Situação do tema inválida.');
   return value;
+}
+
+function storedPublicAssetUrl(row, bucketKey, pathKey) {
+  if (!row?.[bucketKey] || !row?.[pathKey]) return '';
+  try { return publicBrandingAssetUrl(row[bucketKey], row[pathKey]); } catch { return ''; }
 }
 
 function toPublicBranding(church, theme) {
@@ -52,6 +63,7 @@ function toPublicBranding(church, theme) {
     applicationName: church?.app_name ?? null,
     churchName: church?.church_name ?? null,
     logoUrl: church?.logo_url ?? '',
+    backgroundUrl: storedPublicAssetUrl(church, 'background_storage_bucket', 'background_storage_path'),
     annualTheme: theme ? {
       id: theme.id,
       name: theme.title,
@@ -90,7 +102,11 @@ async function withClient(work) {
 async function postgresAdminId(client, actor) {
   const email = String(actor?.email || '').trim().toLowerCase();
   const whatsapp = String(actor?.whatsapp || '').replace(/\D/g, '');
-  if (!email && !whatsapp) throw new Error('Administrador PostgreSQL correspondente não localizado.');
+  if (!email && !whatsapp) {
+    const error = new Error('Sessão administrativa inválida. Entre novamente para continuar.');
+    error.status = 401;
+    throw error;
+  }
   const result = await client.query(
     `select users.id
        from public.app_users users
@@ -101,7 +117,11 @@ async function postgresAdminId(client, actor) {
       limit 1`,
     [email || null, whatsapp || null]
   );
-  if (!result.rowCount) throw new Error('Administrador PostgreSQL correspondente não localizado.');
+  if (!result.rowCount) {
+    const error = new Error('Sua sessão não possui autorização administrativa para esta operação.');
+    error.status = 403;
+    throw error;
+  }
   return result.rows[0].id;
 }
 
@@ -116,7 +136,7 @@ async function audit(client, actorUserId, action, entityType, entityId, summary,
 export async function getPublicBranding() {
   return withClient(async (client) => {
     const [church, theme] = await Promise.all([
-      client.query('select app_name, church_name, logo_url from public.church_branding where id = true'),
+      client.query('select app_name, church_name, logo_url, background_storage_bucket, background_storage_path from public.church_branding where id = true'),
       client.query(`select id, year, title, subtitle, colors, banner_url
                       from public.annual_themes
                      where is_active = true
@@ -129,12 +149,13 @@ export async function getPublicBranding() {
 export async function getBrandingAdministration() {
   return withClient(async (client) => {
     const [church, themes] = await Promise.all([
-      client.query('select app_name, church_name, logo_url, logo_storage_bucket, logo_storage_path from public.church_branding where id = true'),
+      client.query('select app_name, church_name, logo_url, logo_storage_bucket, logo_storage_path, background_storage_bucket, background_storage_path from public.church_branding where id = true'),
       client.query(`select id, year, title, subtitle, colors, banner_url, banner_storage_bucket, banner_storage_path, is_active
                       from public.annual_themes
                      order by year desc`)
     ]);
-    return { church: church.rows[0] ?? null, themes: themes.rows };
+    const churchRow = church.rows[0] ?? null;
+    return { church: churchRow ? { ...churchRow, background_url: storedPublicAssetUrl(churchRow, 'background_storage_bucket', 'background_storage_path') } : null, themes: themes.rows };
   });
 }
 
@@ -143,28 +164,37 @@ export async function saveChurchBranding(actor, input) {
     const appName = text(input.appName, 'Nome do aplicativo', 80);
     const churchName = text(input.churchName, 'Nome da igreja', 120);
     const logoChange = imageChange(input, 'logoAsset', 'logo');
+    const backgroundChange = imageChange(input, 'backgroundAsset', 'background');
     try {
       await client.query('begin');
       const actorUserId = await postgresAdminId(client, actor);
-      const current = await client.query('select logo_url, logo_storage_bucket, logo_storage_path from public.church_branding where id = true');
+      const current = await client.query('select logo_url, logo_storage_bucket, logo_storage_path, background_storage_bucket, background_storage_path from public.church_branding where id = true');
       const currentLogo = current.rows[0] || {};
       const logo = logoChange === undefined
         ? { url: currentLogo.logo_url ?? null, bucket: currentLogo.logo_storage_bucket ?? null, path: currentLogo.logo_storage_path ?? null }
         : logoChange
           ? { url: logoChange.url, bucket: logoChange.bucket, path: logoChange.path }
           : { url: null, bucket: null, path: null };
+      const background = backgroundChange === undefined
+        ? { bucket: currentLogo.background_storage_bucket ?? null, path: currentLogo.background_storage_path ?? null }
+        : backgroundChange
+          ? { bucket: backgroundChange.bucket, path: backgroundChange.path }
+          : { bucket: null, path: null };
       const result = await client.query(
-        `insert into public.church_branding (id, app_name, church_name, logo_url, logo_storage_bucket, logo_storage_path)
-         values (true, $1, $2, $3, $4, $5)
+        `insert into public.church_branding (id, app_name, church_name, logo_url, logo_storage_bucket, logo_storage_path, background_storage_bucket, background_storage_path)
+         values (true, $1, $2, $3, $4, $5, $6, $7)
          on conflict (id) do update set app_name = excluded.app_name, church_name = excluded.church_name,
-           logo_url = excluded.logo_url, logo_storage_bucket = excluded.logo_storage_bucket, logo_storage_path = excluded.logo_storage_path
-         returning app_name, church_name, logo_url, logo_storage_bucket, logo_storage_path`,
-        [appName, churchName, logo.url, logo.bucket, logo.path]
+           logo_url = excluded.logo_url, logo_storage_bucket = excluded.logo_storage_bucket, logo_storage_path = excluded.logo_storage_path,
+           background_storage_bucket = excluded.background_storage_bucket, background_storage_path = excluded.background_storage_path
+         returning app_name, church_name, logo_url, logo_storage_bucket, logo_storage_path, background_storage_bucket, background_storage_path`,
+        [appName, churchName, logo.url, logo.bucket, logo.path, background.bucket, background.path]
       );
-      await audit(client, actorUserId, 'update_branding', 'church_branding', 'true', 'Identidade permanente atualizada.', { fields: ['app_name', 'church_name', 'logo_asset'] });
+      await audit(client, actorUserId, 'update_branding', 'church_branding', 'true', 'Identidade permanente atualizada.', { fields: ['app_name', 'church_name', 'logo_asset', 'background_asset'] });
       await client.query('commit');
       const oldAsset = storedAsset(currentLogo, 'logo_storage_bucket', 'logo_storage_path');
       if (oldAsset && (oldAsset.bucket !== logo.bucket || oldAsset.path !== logo.path)) await removeBrandingImage(oldAsset).catch(() => {});
+      const oldBackground = storedAsset(currentLogo, 'background_storage_bucket', 'background_storage_path');
+      if (oldBackground && (oldBackground.bucket !== background.bucket || oldBackground.path !== background.path)) await removeBrandingImage(oldBackground).catch(() => {});
       return result.rows[0];
     } catch (error) {
       await client.query('rollback').catch(() => {});
@@ -176,7 +206,7 @@ export async function saveChurchBranding(actor, input) {
 export async function saveAnnualTheme(actor, input) {
   return withClient(async (client) => {
     const id = input.id ? text(input.id, 'Tema anual', 36) : null;
-    if (id && !uuid.test(id)) throw new Error('Tema anual inválido.');
+    if (id && !uuid.test(id)) throw validationError('Tema anual inválido.');
     const normalizedYear = year(input.year);
     const title = text(input.name, 'Nome do tema', 160);
     const subtitle = text(input.subtitle, 'Frase do tema', 240, { optional: true });
@@ -211,7 +241,7 @@ export async function saveAnnualTheme(actor, input) {
            returning id, year, title, subtitle, colors, banner_url, banner_storage_bucket, banner_storage_path, is_active`,
           [normalizedYear, title, subtitle, themeColors ? JSON.stringify(themeColors) : null, banner.url, banner.bucket, banner.path, isActive]
         );
-      if (!result.rowCount) throw new Error('Tema anual não encontrado.');
+      if (!result.rowCount) throw validationError('Tema anual não encontrado.');
       await audit(client, actorUserId, id ? 'update_annual_theme' : 'create_annual_theme', 'annual_theme', result.rows[0].id, 'Tema anual atualizado.', { fields: ['year', 'title', 'subtitle', 'colors', 'banner_asset', 'is_active'] });
       await client.query('commit');
       const oldAsset = storedAsset(currentBanner, 'banner_storage_bucket', 'banner_storage_path');
@@ -219,7 +249,11 @@ export async function saveAnnualTheme(actor, input) {
       return result.rows[0];
     } catch (error) {
       await client.query('rollback').catch(() => {});
-      if (error?.code === '23505') throw new Error('Já existe um tema para este ano.');
+      if (error?.code === '23505') {
+        const conflict = new Error('Já existe um tema para este ano.');
+        conflict.status = 409;
+        throw conflict;
+      }
       throw error;
     }
   });
