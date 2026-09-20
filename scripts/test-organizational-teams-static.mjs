@@ -6,6 +6,8 @@ const teams = await readFile('src/server/postgres-teams.mjs', 'utf8');
 const peopleCells = await readFile('src/server/postgres-people-cells.mjs', 'utf8');
 const welcome = await readFile('src/server/postgres-welcome.mjs', 'utf8');
 const app = await readFile('src/app.js', 'utf8');
+const styles = await readFile('src/styles.css', 'utf8');
+const server = await readFile('server.mjs', 'utf8');
 
 for (const required of [
   'create table public.ministries',
@@ -30,5 +32,26 @@ assert.ok(app.includes("'teams'"), 'A área Equipes deve estar presente no front
 assert.ok(app.includes('personPicker'), 'A seleção de pessoas precisa suportar busca visual.');
 assert.ok(app.includes("el.dataset.pickerMultiple === 'true'"), 'Seletores únicos não podem acumular pessoas.');
 assert.ok(app.includes("Selecione o ministério da célula."), 'O formulário deve validar o ministério antes de enviar.');
+assert.ok(app.includes('class="choice-card'), 'O seletor de Ministério deve usar cards próprios.');
+assert.ok(app.includes('class="weekday-choice'), 'O seletor de dia deve usar segmentos próprios.');
+assert.ok(app.includes('class="structured-form supervisor-form"'), 'O modal de Supervisor precisa usar o mesmo contexto visual estruturado.');
+assert.ok(app.includes('class="structured-form welcome-team-form"'), 'O modal de Boas-Vindas precisa usar o mesmo contexto visual estruturado.');
+assert.ok(app.includes('class="person-picker-copy"'), 'O card de pessoa precisa separar nome e informação secundária.');
+assert.ok(app.includes('class="person-picker-check"'), 'A seleção de pessoa precisa ter indicação visual própria.');
+assert.ok(app.includes('aria-pressed="${isSelected}"'), 'Controles segmentados precisam expor o estado de seleção.');
+assert.ok(styles.includes('.cell-form .choice-grid>.choice-card'), 'Cards de Ministério precisam sobrescrever a aparência nativa.');
+assert.ok(styles.includes('.cell-form .weekday-grid>.weekday-choice'), 'Segmentos de dia precisam sobrescrever a aparência nativa.');
+assert.ok(styles.includes('.modal .structured-form .choice-card'), 'O modal de Supervisor precisa ter estilo escuro específico para Ministério.');
+assert.ok(styles.includes('.modal .structured-form .person-picker-option'), 'Os cards de pessoa precisam ter estilo escuro específico nos modais.');
+assert.ok(styles.includes('.person-picker-copy strong'), 'Nome e telefone precisam permanecer em blocos separados.');
+assert.ok(styles.includes('.modal select{appearance:none;-webkit-appearance:none'), 'Selects residuais dos modais não podem usar a aparência nativa clara.');
+assert.ok(styles.includes('.cell-form .choice-grid>.choice-card:focus-visible'), 'Os seletores precisam manter foco visível por teclado.');
+assert.ok(styles.startsWith('@charset "UTF-8";'), 'A folha de estilos deve declarar UTF-8.');
+assert.ok(styles.includes('button{appearance:none;-webkit-appearance:none;cursor:pointer}'), 'Botões não podem herdar a aparência nativa do navegador.');
+assert.ok(styles.includes('input[type="checkbox"]{accent-color:var(--accent)}'), 'Checkboxes devem seguir a cor de destaque do aplicativo.');
+assert.ok(server.includes("'Cache-Control': 'no-cache'"), 'Assets estáticos precisam revalidar após um deploy.');
+assert.ok(server.includes("'text/css; charset=utf-8'"), 'A folha de estilos deve ser enviada em UTF-8.');
+assert.ok(server.includes("'text/javascript; charset=utf-8'"), 'O módulo do frontend deve ser enviado em UTF-8.');
+assert.ok(!/(?:Ã[\u0080-\u00BF]|Â[\u0080-\u00BF]|�)/u.test(app), 'O frontend não pode conter texto corrompido.');
 
 console.log('Validação estática: estrutura organizacional e Equipes passaram.');

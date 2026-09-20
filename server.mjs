@@ -17,6 +17,7 @@ import { normalizePersonPhotoAsset, readPersonPhoto, removePersonPhoto, uploadPe
 const port = Number(process.env.PORT || 3000);
 const root = process.cwd();
 const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8' };
+const staticHeaders = { 'Cache-Control': 'no-cache' };
 const publicAttempts = new Map();
 const loginAttempts = new Map();
 
@@ -266,11 +267,11 @@ createServer(async (request, response) => {
     if (!file.startsWith(root)) return response.writeHead(403).end('Acesso negado');
     try {
       const content = await readFile(file);
-      response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream' });
+      response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', ...staticHeaders });
       response.end(content);
     } catch {
       const content = await readFile(join(root, 'index.html'));
-      response.writeHead(200, { 'Content-Type': types['.html'] });
+      response.writeHead(200, { 'Content-Type': types['.html'], ...staticHeaders });
       response.end(content);
     }
   } catch (error) {
