@@ -33,8 +33,6 @@ input,select,textarea{min-height:44px}
 .login-theme .eyebrow{margin:0;color:var(--theme-sand,var(--sand))}
 .login-theme strong{font-family:Georgia,serif;font-size:22px;letter-spacing:-.025em}
 .login-theme span{color:#e9cfb6;font-size:13px}
-.login-pre-registration{display:block;margin-top:16px;text-align:center;color:var(--sand);font-size:13px;font-weight:750;text-decoration:underline;text-underline-offset:3px}
-.login-pre-registration:hover{color:#fff4e6}
 .modal-backdrop{overscroll-behavior:contain}
 .modal-close{flex:none}
 .modal input[readonly]{color:var(--sand);background:rgba(232,213,181,.06)}
